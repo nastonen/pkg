@@ -48,6 +48,8 @@
 #include "private/utils.h"
 #include "private/fetch.h"
 
+extern void drop_privileges(void);
+
 static struct fetcher {
 	const char *scheme;
 	int (*open)(struct pkg_repo *, struct url *, off_t *);
@@ -175,6 +177,8 @@ pkg_fetch_file_to_fd(struct pkg_repo *repo, const char *url, int dest,
 	off_t		 r;
 	char		 buf[8192];
 	int		 retcode = EPKG_OK;
+	int		 pstat;
+	pid_t		 pid;
 	off_t		 sz = 0;
 	size_t		 buflen = 0;
 	size_t		 left = 0;
@@ -196,6 +200,22 @@ pkg_fetch_file_to_fd(struct pkg_repo *repo, const char *url, int dest,
 	 *
 	 * Error if using plain http://, https:// etc with SRV
 	 */
+
+	pid = fork();
+
+	switch (pid) {
+	case -1:
+		pkg_emit_error("Unable to fork");
+		return (EPKG_FATAL);
+	case 0:
+		drop_privileges();
+		break;
+	default:
+		while (waitpid(pid, &pstat, 0) == -1 && errno == EINTR)
+			;
+
+		return (WEXITSTATUS(pstat));
+	}
 
 	pkg_debug(1, "Request to fetch %s", url);
 	if (repo != NULL &&
@@ -354,5 +374,6 @@ cleanup:
 	/* restore original doc */
 	fetchFreeURL(u);
 
-	return (retcode);
+	/* exit child */
+	exit(retcode);
 }
